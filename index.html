@@ -13,6 +13,7 @@
 </head>
 <body>
 <title>Season's Ledger</title>
+<script>try{if(localStorage.getItem('seasons-ledger-lock'))document.documentElement.classList.add('locked')}catch(e){}</script>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400..700;1,6..96,400..600&family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500;1,600&family=Pinyon+Script&display=swap">
 <style>
@@ -263,6 +264,24 @@ select.input option{font-style:normal}
 }
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(168px + env(safe-area-inset-bottom, 0px));z-index:60;background:var(--ink);color:var(--bg);padding:10px 20px;border-radius:99px;font-size:18px;font-style:italic;opacity:0;pointer-events:none;transition:opacity .2s;max-width:calc(100% - 32px);text-align:center}
 .toast.on{opacity:1}
+/* the lock */
+html.locked .app,html.locked .tabbar,html.locked .fab,html.locked .scrim,html.locked .toast,html.veil .app,html.veil .tabbar,html.veil .fab,html.veil .scrim,html.veil .toast{visibility:hidden}
+#lock{position:fixed;left:0;right:0;top:0;bottom:0;z-index:9999;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:max(24px,env(safe-area-inset-top)) 24px max(24px,env(safe-area-inset-bottom));text-align:center;overflow:auto}
+#lock[hidden]{display:none}
+.lk-mark .seal{width:76px;height:76px;font-size:36px;margin:0 auto 4px}
+.lk-title{font-family:var(--f-script);font-weight:400;font-size:44px;line-height:1.1;color:var(--rose);margin:0}
+.lk-sub{margin:0;color:var(--muted);font-style:italic;font-size:19px;max-width:300px}
+.lk-dots{display:flex;gap:14px;margin:14px 0 2px}
+.lk-dots i{width:15px;height:15px;border-radius:50%;border:1.5px solid var(--gilt)}
+.lk-dots i.on{background:var(--rose);border-color:var(--rose)}
+.lk-msg{min-height:26px;margin:0 0 6px;color:var(--crit);font-style:italic;font-size:18px}
+.lk-pad{display:grid;grid-template-columns:repeat(3,74px);gap:14px;justify-content:center}
+.lk-pad button{width:74px;height:74px;border-radius:50%;border:1px solid var(--gilt);background:var(--paper);color:var(--ink);font-family:var(--f-display);font-size:30px;padding:0;touch-action:manipulation}
+.lk-pad button:active{background:var(--wax1)}
+.lk-pad button.plain{border:0;background:transparent;font-family:inherit;font-size:17px;font-style:italic;color:var(--muted)}
+.lk-pad span{display:block}
+@keyframes lkshake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-9px)}40%,80%{transform:translateX(9px)}}
+#lock.shake .lk-dots{animation:lkshake .35s}
 
 .banner{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:var(--paper2);border:1px dashed var(--gilt);border-radius:18px;padding:10px 16px;font-size:17px;font-style:italic}
 .empty{padding:20px 8px;text-align:center;color:var(--muted);font-size:19px;font-style:italic}
@@ -509,6 +528,7 @@ select.input option{font-style:normal}
   </form>
 </div>
 
+<div id="lock" role="dialog" aria-modal="true" aria-label="Unlock the ledger" hidden></div>
 <div class="scrim" id="xfer-scrim" hidden>
   <form class="sheet" id="xfer-form" role="dialog" aria-modal="true" aria-labelledby="xfer-title" novalidate>
     <div class="sheet-garland" id="xfer-garland" aria-hidden="true"></div>
@@ -767,13 +787,16 @@ var PURSE_IDS = PURSES.map(function(x){ return x.id; });
 function purse(id){ for (var i = 0; i < PURSES.length; i++) if (PURSES[i].id === id) return PURSES[i]; return PURSES[0]; }
 function purseOf(x){ return x && PURSE_IDS.indexOf(x.acct) >= 0 ? x.acct : 'vault'; }
 function pseal(id, sm){ var p = purse(id); return '<span class="seal k' + p.k + (sm ? ' sm' : '') + '" aria-hidden="true">' + esc(p.s) + '</span>'; }
-function purseBalance(id){
+function purseBalance(id, before){
   var b = +(state.opening || {})[id] || 0;
-  state.tx.forEach(function(t){ if (purseOf(t) === id) b += t.type === 'income' ? t.amount : -t.amount; });
-  (state.xfers || []).forEach(function(x){ if (x.to === id) b += x.amount; if (x.from === id) b -= x.amount; });
+  state.tx.forEach(function(t){ if (purseOf(t) === id && (!before || t.date < before)) b += t.type === 'income' ? t.amount : -t.amount; });
+  (state.xfers || []).forEach(function(x){ if (before && x.date >= before) return; if (x.to === id) b += x.amount; if (x.from === id) b -= x.amount; });
   return Math.round(b * 100) / 100;
 }
-function purseTotal(){ return Math.round(PURSE_IDS.reduce(function(s, id){ return s + purseBalance(id); }, 0) * 100) / 100; }
+function purseTotal(before){ return Math.round(PURSE_IDS.reduce(function(s, id){ return s + purseBalance(id, before); }, 0) * 100) / 100; }
+function xferNet(id, mk){ var n = 0; (state.xfers || []).forEach(function(x){ if (x.date.slice(0, 7) !== mk) return; if (x.to === id) n += x.amount; if (x.from === id) n -= x.amount; }); return n; }
+function monthStart(mk){ return mk + '-01'; }
+function broughtForward(mk){ return purseTotal(monthStart(mk)); }
 function purseMonth(id, mk){
   var r = {inc:0, exp:0};
   state.tx.forEach(function(t){ if (purseOf(t) === id && t.date.slice(0, 7) === mk){ if (t.type === 'income') r.inc += t.amount; else r.exp += t.amount; } });
@@ -1130,7 +1153,8 @@ function letterText(list, inc, exp, net){
 }
 
 function viewHome(){
-  var list = monthTx(state.month), inc = sum(list, 'income'), exp = sum(list, 'expense'), net = inc - exp;
+  var list = monthTx(state.month), inc = sum(list, 'income'), exp = sum(list, 'expense'), flow = inc - exp;
+  var bf = broughtForward(state.month), net = Math.round((bf + flow) * 100) / 100;
   var total = purseTotal();
   var recent = sortTx(list).slice(0, 6);
   var watch = budgetRows(list, 3);
@@ -1139,9 +1163,9 @@ function viewHome(){
   sampleBanner() + storageBanner() + noticeBanner() +
   '<section class="arch" aria-label="Your purse">' + sprig('l') + sprig('r') +
     '<span class="label">' + (net < 0 ? 'Beyond your means by' : 'Left in your purse') + '</span><div class="big' + (net < 0 ? ' neg' : '') + '">' + esc(fmt(Math.abs(net))) + '</div>' +
-    '<div class="pair"><div class="in"><span class="label">Arrived</span><b>' + esc(fmt(inc)) + '</b></div><div><span class="label">Departed</span><b>' + esc(fmt(exp)) + '</b></div></div>' +
+    (bf !== 0 ? '<div class="total" style="margin:0 0 10px">Brought forward from ' + esc(monthName(shiftMonth(state.month, -1))) + ': <span class="num">' + (bf < 0 ? '\u2212' : '') + esc(fmt(Math.abs(bf))) + '</span></div>' : '') + '<div class="pair"><div class="in"><span class="label">Arrived</span><b>' + esc(fmt(inc)) + '</b></div><div><span class="label">Departed</span><b>' + esc(fmt(exp)) + '</b></div></div>' +
     '<div class="total">Across every season, your purse holds <span class="num">' + esc(fmt(total)) + '</span></div></section>' +
-  '<section class="card letter"><div class="hello">My dearest,</div><p class="prose">' + esc(letterText(list, inc, exp, net)) + '</p>' +
+  '<section class="card letter"><div class="hello">My dearest,</div><p class="prose">' + esc(letterText(list, inc, exp, flow)) + '</p>' +
     '<div class="signoff"><span class="script">Ever yours, your Ledger</span><svg class="miniwax" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="40" style="fill:var(--wax2)"/><circle cx="50" cy="50" r="30" fill="none" stroke-opacity=".3" stroke-width="3" style="stroke:var(--btn-ink)"/><use href="#peony" x="30" y="30" width="40" height="40"/></svg></div></section>' +
   pursesCard() +
   '<div class="btnrow" style="justify-content:center"><button type="button" class="btn ghost" data-act="open-sum" data-mode="month">This month in full</button><button type="button" class="btn ghost" data-act="open-sum" data-mode="year">The whole year</button></div>' +
@@ -1222,10 +1246,10 @@ function pursesCard(){
 function viewPurses(){
   var mk = state.month;
   var cards = PURSES.map(function(p){
-    var m = purseMonth(p.id, mk), bal = purseBalance(p.id), open = +(state.opening || {})[p.id] || 0;
+    var m = purseMonth(p.id, mk), bfp = purseBalance(p.id, monthStart(mk)), bal = Math.round((bfp + m.inc - m.exp + xferNet(p.id, mk)) * 100) / 100, open = +(state.opening || {})[p.id] || 0;
     return '<article class="card purse"><div class="brow-top">' + pseal(p.id) + '<span class="row-main"><b>' + esc(p.name) + '</b><small>' + esc(p.as) + '</small></span></div>' +
       '<div class="purse-bal' + (bal < 0 ? ' neg' : '') + '">' + (bal < 0 ? '−' : '') + esc(fmt(Math.abs(bal))) + '</div>' +
-      '<p class="small muted" style="font-style:italic">' + esc(monthLabel(mk)) + ': arrived ' + esc(fmt(m.inc)) + ', departed ' + esc(fmt(m.exp)) + '</p>' +
+      '<p class="small muted" style="font-style:italic">' + esc(monthLabel(mk)) + ': brought forward ' + (bfp < 0 ? '\u2212' : '') + esc(fmt(Math.abs(bfp))) + ', arrived ' + esc(fmt(m.inc)) + ', departed ' + esc(fmt(m.exp)) + '</p>' +
       '<label class="field" for="open-' + p.id + '"><span class="label">Sum held before your first letter</span><input class="input" id="open-' + p.id + '" data-open="' + p.id + '" inputmode="decimal" placeholder="None" value="' + (open > 0 ? open : '') + '"></label>' +
       '<div class="btnrow"><button type="button" class="btn ghost sm" data-act="purse-letters" data-id="' + p.id + '">Its letters</button><button type="button" class="btn ghost sm" data-act="xfer-new" data-from="' + p.id + '">Carry a sum from here</button></div></article>';
   }).join('');
@@ -1316,6 +1340,7 @@ function viewMore(){
   '<section class="card"><div class="settings-row"><label class="field" for="currency"><span class="label">Coin of the realm</span><select class="input" id="currency">' + opts + '</select></label></div>' +
     '<div class="settings-row"><span class="label" id="theme-l">Light of the room</span><div class="seg" role="radiogroup" aria-labelledby="theme-l">' + th('system', 'As the day wills') + th('light', 'Daylight') + th('dark', 'Candlelight') + '</div></div></section>' +
   '<section class="card"><h2 class="h3" style="margin-bottom:6px">Where your letters are kept</h2><p class="muted">Every letter you write stays in this browser, on this very device. None is posted anywhere. Should you clear this site\'s data, they will be lost, so save a copy to Files or your Drive now and then. Open the ledger the same way each time (the same browser or Home Screen icon), since each keeps its own separate letter-book.</p></section>' +
+  lockCard() +
   '</div><div class="stack">' +
   '<section class="card"><h2 class="h3" style="margin-bottom:12px">Safekeeping</h2>' +
     '<div class="settings-row"><span class="muted">' + (state.lastBackup ? 'Last saved copy: ' + esc(new Date(state.lastBackup).toLocaleDateString('en-GB', {day:'numeric', month:'long', year:'numeric'})) + '.' : 'No copy has been saved yet.') + ' A saved copy is one small file holding every letter, allowance, hope, due and purse. Choose Files, or your Drive, when asked where to keep it.</span><div class="btnrow"><button type="button" class="btn" data-act="backup-file">Save a copy to Files</button><button type="button" class="btn ghost" data-act="backup">Copy as text</button></div></div>' +
@@ -1330,13 +1355,15 @@ function viewMore(){
 }
 
 /* ---------- standing dues (recurring bills and wages) ---------- */
-var FREQS = [['monthly','Every month'],['semimonthly','Twice a month (15th and last day)'],['fortnightly','Every fortnight'],['weekly','Every week'],['yearly','Every year']];
+var FREQS = [['daily','Every day'],['monthly','Every month'],['semimonthly','Twice a month (15th and last day)'],['fortnightly','Every fortnight'],['weekly','Every week'],['yearly','Every year']];
 function daysIn(y, m){ return new Date(y, m + 1, 0).getDate(); }
 function addDaysISO(n){ var d = new Date(); d.setDate(d.getDate() + n); return iso(d); }
 function occurrences(r, upto){
   var out = [], first = parseISO(r.first), i, d, base, dim, yy;
   function push(dt){ var k = iso(dt); if (k >= r.first && k <= upto && (!r.last || k > r.last)) out.push(k); }
-  if (r.freq === 'weekly' || r.freq === 'fortnightly'){
+  if (r.freq === 'daily'){
+    for (i = 0; i < 4000; i++){ d = new Date(first.getFullYear(), first.getMonth(), first.getDate() + i); if (iso(d) > upto) break; push(d); }
+  } else if (r.freq === 'weekly' || r.freq === 'fortnightly'){
     var step = r.freq === 'weekly' ? 7 : 14;
     for (i = 0; i < 900; i++){ d = new Date(first.getFullYear(), first.getMonth(), first.getDate() + i * step); if (iso(d) > upto) break; push(d); }
   } else if (r.freq === 'yearly'){
@@ -1375,10 +1402,11 @@ function postDue(){
 }
 function monthlyEquiv(r){
   var a = r.amount;
-  return r.freq === 'monthly' ? a : r.freq === 'semimonthly' ? a * 2 : r.freq === 'fortnightly' ? a * 26 / 12 : r.freq === 'weekly' ? a * 52 / 12 : a / 12;
+  return r.freq === 'daily' ? a * 365 / 12 : r.freq === 'monthly' ? a : r.freq === 'semimonthly' ? a * 2 : r.freq === 'fortnightly' ? a * 26 / 12 : r.freq === 'weekly' ? a * 52 / 12 : a / 12;
 }
 function freqText(r){
   var d = parseISO(r.first);
+  if (r.freq === 'daily') return 'Every day, from ' + shortDate(r.first);
   if (r.freq === 'monthly') return 'Every month, on the ' + ordinal(d.getDate());
   if (r.freq === 'semimonthly') return 'Twice a month, the 15th and the last day';
   if (r.freq === 'fortnightly') return 'Every fortnight, from ' + shortDate(r.first);
@@ -2296,6 +2324,109 @@ function fallbackBackup(txt){
   toast('Select the text and copy it by hand');
 }
 
+/* ---------- the lock ---------- */
+var LOCK_KEY = 'seasons-ledger-lock', LOCKF_KEY = 'seasons-ledger-lockfails';
+var subtle = (window.crypto && window.crypto.subtle) || null;
+var lockCfg = null;
+try { var lc0 = JSON.parse(localStorage.getItem(LOCK_KEY) || 'null'); if (lc0 && lc0.s && lc0.h && lc0.i) lockCfg = lc0; } catch(e){}
+var lk = {mode:'', buf:'', first:'', after:'', msg:'', hiddenAt:0, busy:false};
+function lkFails(){ try { return JSON.parse(localStorage.getItem(LOCKF_KEY) || '{}') || {}; } catch(e){ return {}; } }
+function lkSetFails(o){ try { localStorage.setItem(LOCKF_KEY, JSON.stringify(o)); } catch(e){} }
+function lkSaveCfg(){ try { if (lockCfg) localStorage.setItem(LOCK_KEY, JSON.stringify(lockCfg)); else localStorage.removeItem(LOCK_KEY); } catch(e){} }
+function b64(buf){ var a = new Uint8Array(buf), t = ''; for (var i = 0; i < a.length; i++) t += String.fromCharCode(a[i]); return btoa(t); }
+function unb64(t){ var b = atob(t), a = new Uint8Array(b.length); for (var i = 0; i < b.length; i++) a[i] = b.charCodeAt(i); return a; }
+function lkHash(pin, salt, iter){
+  return subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveBits']).then(function(k){
+    return subtle.deriveBits({name:'PBKDF2', salt:salt, iterations:iter, hash:'SHA-256'}, k, 256);
+  }).then(b64);
+}
+function lkPaint(){
+  var el = document.getElementById('lock'); if (!el) return;
+  var T = {unlock:['Your letters are sealed', 'Enter your six-digit secret to open the ledger.'], old:['Your current secret', 'Enter it to go on.'], set1:['Choose a secret', 'Six digits you will not forget.'], set2:['Once more, to be sure', 'Enter the same six digits again.']}[lk.mode] || ['', ''];
+  var dots = '', keys = '', i;
+  for (i = 0; i < 6; i++) dots += '<i class="' + (i < lk.buf.length ? 'on' : '') + '"></i>';
+  for (i = 1; i <= 9; i++) keys += '<button type="button" data-act="lk" data-v="' + i + '">' + i + '</button>';
+  keys += (lk.mode === 'unlock' ? '<span></span>' : '<button type="button" class="plain" data-act="lk" data-v="cancel">Cancel</button>') +
+    '<button type="button" data-act="lk" data-v="0">0</button><button type="button" class="plain" data-act="lk" data-v="back" aria-label="Take back a digit">⌫</button>';
+  el.innerHTML = '<div class="lk-mark"><span class="seal k2">S</span></div><h1 class="lk-title">' + T[0] + '</h1><p class="lk-sub">' + T[1] + '</p>' +
+    '<div class="lk-dots" role="img" aria-label="' + lk.buf.length + ' of 6 digits">' + dots + '</div><p class="lk-msg" role="alert">' + esc(lk.msg) + '</p><div class="lk-pad">' + keys + '</div>';
+}
+function lkWait(){
+  if (lk.mode !== 'unlock' && lk.mode !== 'old') return;
+  var left = Math.ceil(((lkFails().until || 0) - Date.now()) / 1000);
+  if (left > 0){ lk.msg = 'Too many tries. Pray wait ' + left + ' seconds.'; lkPaint(); setTimeout(lkWait, 1000); }
+  else if (lk.msg.indexOf('Too many') === 0){ lk.msg = ''; lkPaint(); }
+}
+function lkShow(mode, after){
+  var el = document.getElementById('lock'); if (!el) return;
+  lk.mode = mode; lk.after = after || ''; lk.buf = ''; lk.first = ''; lk.msg = ''; lk.busy = false;
+  if (mode === 'unlock') document.documentElement.classList.add('locked');
+  el.hidden = false; lkPaint(); lkWait();
+}
+function lkHide(){ var el = document.getElementById('lock'); if (el) el.hidden = true; document.documentElement.classList.remove('locked'); lk.mode = ''; lk.buf = ''; lk.first = ''; }
+function lkFail(m){
+  var f = lkFails(), n = (f.n || 0) + 1, until = n >= 5 ? Date.now() + Math.min(600, 15 * Math.pow(2, n - 5)) * 1000 : 0;
+  lkSetFails({n:n, until:until}); lk.buf = ''; lk.msg = m;
+  var el = document.getElementById('lock'); el.classList.remove('shake'); void el.offsetWidth; el.classList.add('shake'); lkPaint(); lkWait();
+}
+function lkDone(){
+  var pin = lk.buf, mode = lk.mode;
+  if (mode === 'unlock' || mode === 'old'){
+    lk.busy = true;
+    lkHash(pin, unb64(lockCfg.s), lockCfg.i).then(function(h){
+      lk.busy = false;
+      if (h !== lockCfg.h){ lkFail('That is not it, dearest.'); return; }
+      lkSetFails({});
+      if (mode === 'unlock'){ lkHide(); render(); }
+      else if (lk.after === 'off'){ lockCfg = null; lkSaveCfg(); lkHide(); render(); toast('The lock is removed'); }
+      else lkShow('set1');
+    }, function(){ lk.busy = false; lkFail('The lock could not be read here.'); });
+  } else if (mode === 'set1'){ lk.first = pin; lk.buf = ''; lk.mode = 'set2'; lkPaint(); }
+  else if (mode === 'set2'){
+    if (pin !== lk.first){ lk.first = ''; lk.buf = ''; lk.mode = 'set1'; lk.msg = 'Those did not match. Begin again.'; lkPaint(); return; }
+    var salt = crypto.getRandomValues(new Uint8Array(16)), iter = 200000;
+    lk.busy = true;
+    lkHash(pin, salt, iter).then(function(h){
+      lk.busy = false;
+      lockCfg = {s:b64(salt), h:h, i:iter, a:lockCfg && lockCfg.a != null ? lockCfg.a : 1};
+      lkSaveCfg(); lkSetFails({}); lkHide(); render(); toast('Your letter-book is locked');
+    }, function(){ lk.busy = false; lk.msg = 'A lock could not be made here.'; lk.buf = ''; lkPaint(); });
+  }
+}
+function lkKey(v){
+  if (lk.busy || !lk.mode) return;
+  if (v === 'cancel'){ if (lk.mode !== 'unlock') lkHide(); return; }
+  if ((lk.mode === 'unlock' || lk.mode === 'old') && (lkFails().until || 0) > Date.now()) return;
+  if (v === 'back'){ lk.buf = lk.buf.slice(0, -1); lk.msg = ''; lkPaint(); return; }
+  if (!/^\d$/.test(v) || lk.buf.length >= 6) return;
+  lk.buf += v; lk.msg = ''; lkPaint();
+  if (lk.buf.length === 6) setTimeout(lkDone, 140);
+}
+function lockCard(){
+  var h = '<section class="card"><h2 class="h3" style="margin-bottom:6px">A lock for the letter-book</h2>';
+  if (!subtle) return h + '<p class="muted">This browser cannot make a lock here.</p></section>';
+  h += '<p class="muted">A six-digit secret shields your letters from anyone who picks up your phone while it is open. If it is forgotten it cannot be recovered, so keep a saved copy in Files. Saved copies are not locked, so keep them somewhere private.</p>';
+  if (!lockCfg) return h + '<div class="btnrow" style="margin-top:12px"><button type="button" class="btn" data-act="lock-set">Set a secret</button></div></section>';
+  var a = lockCfg.a != null ? +lockCfg.a : 1;
+  function o(v, l){ return '<option value="' + v + '"' + (a === v ? ' selected' : '') + '>' + l + '</option>'; }
+  return h + '<div class="settings-row"><label class="field" for="lock-auto"><span class="label">Lock again after leaving</span><select class="input" id="lock-auto">' + o(0, 'At once') + o(1, 'One minute') + o(5, 'Five minutes') + o(15, 'Fifteen minutes') + '</select></label></div>' +
+    '<div class="btnrow"><button type="button" class="btn" data-act="lock-now">Lock now</button><button type="button" class="btn ghost" data-act="lock-change">Change secret</button><button type="button" class="btn ghost danger" data-act="lock-off">Remove lock</button></div></section>';
+}
+document.addEventListener('visibilitychange', function(){
+  if (!lockCfg || !subtle) return;
+  if (document.hidden){ lk.hiddenAt = Date.now(); document.documentElement.classList.add('veil'); }
+  else {
+    document.documentElement.classList.remove('veil');
+    var a = +lockCfg.a;
+    if (lk.mode !== 'unlock' && (a === 0 || Date.now() - lk.hiddenAt >= a * 60000)) lkShow('unlock');
+  }
+});
+document.addEventListener('keydown', function(e){
+  var el = document.getElementById('lock'); if (!el || el.hidden) return;
+  if (/^\d$/.test(e.key)) lkKey(e.key); else if (e.key === 'Backspace') lkKey('back');
+});
+if (lockCfg && subtle) lkShow('unlock');
+
 /* ---------- events ---------- */
 document.addEventListener('click', function(e){
   if (e.target.id === 'tx-scrim' || e.target.id === 'wish-scrim' || e.target.id === 'due-scrim' || e.target.id === 'xfer-scrim'){ closeSheets(); return; }
@@ -2400,6 +2531,11 @@ document.addEventListener('click', function(e){
     case 'erase':
       if (!armed(el, 'Tap again to burn it all')) break;
       state.tx = []; state.wishes = []; state.recs = []; state.budgets = {}; state.opening = {}; state.xfers = []; state.sample = false; save(); render(); toast('The ledger is ashes'); break;
+    case 'lk': lkKey(el.getAttribute('data-v')); break;
+    case 'lock-set': lkShow('set1'); break;
+    case 'lock-now': lkShow('unlock'); break;
+    case 'lock-change': lkShow('old', 'change'); break;
+    case 'lock-off': lkShow('old', 'off'); break;
     case 'backup-file': saveBackupFile(); break;
     case 'backup-later': var tm = new Date(); tm.setDate(tm.getDate() + 1); state.nudgeUntil = tm.getFullYear() + '-' + pad(tm.getMonth() + 1) + '-' + pad(tm.getDate()); save(); render(); break;
     case 'backup':
@@ -2426,6 +2562,7 @@ document.addEventListener('input', function(e){
 document.addEventListener('change', function(e){
   var t = e.target;
   if (t.id === 'currency'){ state.currency = t.value; save(); render(); toast('The coin is changed'); }
+  else if (t.id === 'lock-auto' && lockCfg){ lockCfg.a = +t.value; lkSaveCfg(); toast('The lock will keep this rhythm'); }
   else if (t.id === 'guide-pick'){ state.guidePick = t.value; render(); window.scrollTo(0, 0); try { document.getElementById('guide-pick').focus(); } catch(x){} }
   else if (t.getAttribute && t.getAttribute('data-open')){
     var ov = parseAmt(t.value), oid = t.getAttribute('data-open');
